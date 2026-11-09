@@ -153,7 +153,7 @@ def _digest(paths, extra) -> str:
     h = hashlib.sha256()
     for p in paths:
         with open(p, "rb") as f:
-            h.update(f.read())
+            h.update(f.read().replace(b"\r\n", b"\n"))      # same digest on Windows and Linux
     h.update(json.dumps(extra, sort_keys=True).encode())
     return h.hexdigest()[:16]
 
