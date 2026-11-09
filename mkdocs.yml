@@ -1,0 +1,87 @@
+site_name: tiny-langgraph
+site_description: LangGraph-style AI agents for microcontrollers. Write in Python, run verified C on ESP32 and ESP8266.
+site_url: https://mak-ahoy.github.io/tiny-langgraph/
+repo_url: https://github.com/mak-ahoy/tiny-langgraph
+repo_name: mak-ahoy/tiny-langgraph
+edit_uri: edit/main/docs/
+copyright: Copyright &copy; 2026 Ali Haris. MIT License. Not affiliated with LangChain.
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: deep orange
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+not_in_nav: |
+  guide.md
+
+nav:
+  - Home: index.md
+  - Get started:
+      - Installation: get-started/installation.md
+      - Your first agent: get-started/first-agent.md
+      - Flash a board: get-started/flash-a-board.md
+  - Concepts:
+      - State and fields: concepts/state.md
+      - The graph: concepts/graph.md
+      - Rules, planner, verifier: concepts/deciding.md
+      - Tools and approvals: concepts/tools.md
+  - Guides:
+      - Boards: guides/boards.md
+      - Multi-agent: guides/multi-agent.md
+      - MCP server: guides/mcp.md
+      - Models: guides/models.md
+      - Drivers: guides/drivers.md
+      - Web page and trace viewer: guides/web.md
+  - Reference:
+      - The Python you can use: reference/python-subset.md
+      - C runtime and schema.yaml: reference/c-runtime.md
+      - Coming from LangGraph: reference/from-langgraph.md
+      - Results and limitations: reference/results.md

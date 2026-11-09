@@ -15,3 +15,6 @@ CLAUDE.md
 .claude/
 research/
 tests/test_notice_sim.py
+
+# docs site, built locally (mkdocs build)
+site/

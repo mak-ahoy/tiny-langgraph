@@ -7,6 +7,8 @@ thinking, live, from the board.
 
 ![The trace viewer replaying a run: the agent asked a human to approve an alarm, was refused, and replanned](docs/viewer.png)
 
+**[Documentation](https://mak-ahoy.github.io/tiny-langgraph/)** · [Get started](https://mak-ahoy.github.io/tiny-langgraph/get-started/installation/) · [Examples](examples)
+
 > **Early (v0.4), research project.** Runs on real ESP32-S3 and NodeMCU boards.
 > Inspired by [LangGraph](https://github.com/langchain-ai/langgraph); not affiliated with LangChain.
 
@@ -144,6 +146,7 @@ how they were measured: [docs/guide.md](docs/guide.md#results-so-far).
 
 ## Documentation
 
+- **[The docs site](https://mak-ahoy.github.io/tiny-langgraph/)**: get started, concepts, guides (boards, multi-agent, MCP, models, drivers), reference.
 - [docs/guide.md](docs/guide.md): the full guide: the Python you can use, drivers, coming from
   LangGraph, the C side, the trace viewer, the web page, results, limitations, roadmap.
 - `python -m unittest discover -s tests -p "test_*.py"` runs the tests; `make check` runs

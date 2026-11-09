@@ -1,0 +1,24 @@
+name: docs
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write          # pushes the built site to the gh-pages branch
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "mkdocs-material>=9.5,<10"
+      - name: Build (strict: broken links fail) and publish to gh-pages
+        env:
+          NO_MKDOCS_2_WARNING: "1"
+        run: mkdocs gh-deploy --strict --force --no-history
