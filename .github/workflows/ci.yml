@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: make CC=${{ matrix.cc }} all
+      - name: Run examples
+        run: make CC=${{ matrix.cc }} demo
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests and examples with address + undefined-behavior sanitizers
+        run: make CC=gcc asan
+
+  toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml numpy
+      - name: Toolchain and Python API tests (C and Python agree on every situation)
+        run: make py-test
+      - name: Generated code is up to date
+        run: |
+          for s in examples/*/schema.yaml; do python tools/tlg.py gen "$s"; done
+          PYTHONPATH=python python examples/pet_watcher/agent.py check
+          PYTHONPATH=python python examples/porch_light/agent.py check
+          (cd examples/feeding_station && PYTHONPATH=../../python python feeder.py check && PYTHONPATH=../../python python watcher.py check)
+          git diff --exit-code examples
+      - name: Committed pet watcher model matches its rules
+        run: |
+          USE_MODEL=1 PYTHONPATH=python python examples/pet_watcher/agent.py build esp32s3 | tee build.log
+          grep -q "model: up to date" build.log
+      - name: Committed model still matches the rules
+        run: make model-check
+
+  arduino:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyserial pyyaml numpy
+      - name: Make the sketches
+        run: |
+          python tools/arduino_bundle.py
+          USE_MODEL=1 PYTHONPATH=python python examples/pet_watcher/agent.py build esp32s3
+          mkdir -p build/model && cp -r examples/pet_watcher/build/esp32s3/pet_watcher build/model/
+          PYTHONPATH=python python examples/pet_watcher/agent.py build esp32s3
+          PYTHONPATH=python python examples/porch_light/agent.py build nodemcu
+          (cd examples/feeding_station && PYTHONPATH=../../python python feeder.py build nodemcu && PYTHONPATH=../../python python watcher.py build esp32s3)
+      - uses: arduino/setup-arduino-cli@v2
+      - name: Install the ESP32 and ESP8266 cores
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli config add board_manager.additional_urls https://arduino.esp8266.com/stable/package_esp8266com_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32 esp8266:esp8266
+      - name: Compile for ESP32-S3
+        run: |
+          for sketch in build/arduino/door_guard_web examples/pet_watcher/build/esp32s3/pet_watcher build/model/pet_watcher \
+              examples/feeding_station/build/esp32s3/watcher; do
+            arduino-cli compile --warnings all \
+              --fqbn "esp32:esp32:esp32s3:PSRAM=opi,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB" "$sketch"
+          done
+      - name: Compile for NodeMCU (ESP8266)
+        run: |
+          arduino-cli compile --warnings all --fqbn "esp8266:esp8266:nodemcuv2:eesz=4M2M" \
+            examples/porch_light/build/nodemcu/porch_light
+          arduino-cli compile --warnings all --fqbn "esp8266:esp8266:nodemcuv2:eesz=4M2M" \
+            examples/feeding_station/build/nodemcu/feeder

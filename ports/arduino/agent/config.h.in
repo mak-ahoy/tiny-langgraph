@@ -1,0 +1,59 @@
+/* Settings for @NAME@ on the board. Edit these, then upload.
+   Rebuilding keeps this file: your Wi-Fi and PIN stay. */
+#pragma once
+
+/* Your Wi-Fi. Leave WIFI_SSID empty to always use the board's own hotspot. */
+#define WIFI_SSID        ""
+#define WIFI_PASSWORD    ""
+
+/* If your Wi-Fi can't be reached, the board starts its own network instead:
+   join it, then open http://192.168.4.1  (password: at least 8 characters) */
+#define AP_PASSWORD      "tinylanggraph"
+
+/* The web page is at http://@HOSTNAME@.local (or the IP printed at startup). */
+#define HOSTNAME         "@HOSTNAME@"
+
+/* PIN for approving risky tools from the web page. Without it the page is
+   read-only. Change it: anyone on your network can open the page. */
+#define APPROVAL_PIN     "@PIN@"
+
+/* How long the agent waits for an answer before treating it as "no". */
+#define APPROVAL_TIMEOUT_MS  120000
+
+/* Run the graph every N ms (0 = only when you type r in the Serial Monitor). */
+#define RUN_EVERY_MS     30000
+
+/* Time of day: synced from the internet when on Wi-Fi. TIMEZONE is a POSIX TZ
+   string, e.g. "PKT-5" (Pakistan), "CET-1CEST,M3.5.0,M10.5.0/3" (central Europe),
+   "EST5EDT,M3.2.0,M11.1.0" (US east). Without internet the clock starts at START_HOUR. */
+#define TIMEZONE         "UTC0"
+#define START_HOUR       12
+
+/* 1: the Serial Monitor shows @tlg trace lines (for the viewer over USB).
+   0: it shows readable text instead. The web page works either way. */
+#define SERIAL_TRACE     0
+
+/* 1: print every run as it happens (the setting above picks the format).
+   0: print only one summary line per run, after the run's clock stops: use this
+   to measure the true run time (printing at 115200 baud takes ~10 ms a run). */
+#define SERIAL_LOG       1
+
+/* Data log: every run adds a line (time, every Choice/Score field, the plan) to a file per
+   day on the flash; the last LOG_DAYS days are kept (~170 KB a day at one run every 30 s;
+   the default fits this board's file system). Download it from the web page to fit models
+   on your PC. 0 = no log. */
+#define LOG_DAYS         @LOG_DAYS@
+
+/* Boards that talk to each other (prebuilt.Mailbox) need the same NET_KEY and the same Wi-Fi
+   channel (the same router, or none). Boards with another key are ignored. */
+#define NET_KEY          "tiny-langgraph"
+
+/* MCP: AI clients (and other PCs) call this board's tools at http://<board>/mcp with the header
+   "Authorization: Bearer <MCP_KEY>". A call is a request: the board's own rules still decide.
+   Made up at build time; change it if it leaks. "" = no key (anyone on your network). */
+#define MCP_KEY          "@MCP_KEY@"
+/* How long a tool call waits for the board's answer (e.g. a human approving at the device). */
+#define MCP_WAIT_MS      10000
+
+/* BOOT button (FLASH on a NodeMCU): pressing it approves a pending request at the device. */
+#define BOOT_PIN         0

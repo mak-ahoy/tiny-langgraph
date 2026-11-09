@@ -1,0 +1,17 @@
+build/
+build-asan/
+examples/*/data/
+__pycache__/
+*.pyc
+*.o
+*.exe
+.vscode/
+.DS_Store
+examples/*/build/
+*.egg-info/
+
+# private: working notes and unpublished research
+CLAUDE.md
+.claude/
+research/
+tests/test_notice_sim.py

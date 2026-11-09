@@ -1,0 +1,85 @@
+# Pet watcher: keeps an eye on a cat while you're away.
+#
+#   A schema.yaml twin of examples/pet_watcher/agent.py, kept to test the YAML toolchain.
+#   python tools/tlg.py check tests/fixtures/pet_watcher_schema.yaml
+
+name: pet_watcher
+description: keeps an eye on a cat and decides how to respond
+
+# What the agent observes. One token per slot, always in this order.
+inputs:
+  cat:          [none, seen, in_zone]      # camera: not visible, visible, in a forbidden zone
+  activity:     [resting, normal, restless] # camera: how much it moves
+  last_seen:    [recent, hours, long]      # memory: time since the cat was last seen
+  meal:         [not_due, due, overdue]    # clock + feeding schedule
+  fed_recently: [no, yes]                  # memory: fed in the last few hours?
+  tod:          [day, night]
+  owner:        [home, away]
+  wifi:         [up, down]
+  recent:       [none, few, many]          # alerts and chirps lately (from memory)
+
+# What the model concludes before it plans.
+think:
+  wellbeing: [ok, watch, concern]   # is the cat okay?
+  mischief:  [no, yes]              # is it somewhere it shouldn't be?
+
+# Hard rules, checked on the device too. The model can never get around them.
+facts:
+  wifi_up:        wifi == up
+  cat_visible:    cat != none
+  restless_night: activity == restless and tod == night
+  # beep only at a cat in a forbidden zone, and stop if beeping isn't working
+  can_chirp:      cat == in_zone and recent != many
+  # feed only when a meal is due and the cat wasn't fed recently: never overfeed
+  can_feed:       meal in [due, overdue] and fed_recently == no
+
+# The rules: what the model learns, and what the device checks it against.
+# think: first matching rule wins.  want: when each outcome is wanted.
+rules:
+  think:
+    mischief:
+      - yes: cat == in_zone
+      - no: true
+    wellbeing:
+      - concern: last_seen == long                    # nobody has seen the cat for a long time
+      - concern: meal == overdue and not cat_visible  # missed a meal and is nowhere to be seen
+      - watch: last_seen == hours
+      - watch: cat_visible and activity == restless
+      - watch: meal == overdue                        # visible, but hasn't eaten on time
+      - ok: true
+  want:
+    recorded: true
+    evidence: cat_visible and (mischief == yes or wellbeing != ok)     # a photo worth looking at later
+    deterred: mischief == yes                                          # off the counter, please
+    # always for a concern; for "watch" only when away and not already told;
+    # and when beeping isn't working
+    owner_informed: wellbeing == concern or (wellbeing == watch and owner == away and recent == none) or (mischief == yes and recent == many)
+    fed: meal in [due, overdue]                       # can_feed still stops overfeeding
+    comforted: cat_visible and restless_night         # a soft light for a restless cat at night
+
+# What a plan can achieve. only_if_wanted: a plan doing this when it wasn't
+# asked for is rejected (no surprise beeps, feeding or messages).
+outcomes:
+  recorded:       1
+  evidence:       2
+  owner_informed: { weight: 3, only_if_wanted: true }
+  deterred:       { weight: 4, only_if_wanted: true }
+  comforted:      { weight: 3, only_if_wanted: true }
+  fed:            { weight: 5, only_if_wanted: true }
+
+actions:
+  log:         { cost: 1, achieves: recorded }
+  snapshot:    { cost: 2, needs: cat_visible, achieves: evidence }       # a photo of the cat
+  notify:      { cost: 3, needs: wifi_up, achieves: owner_informed }     # message to your phone
+  chirp:       { cost: 3, needs: can_chirp, achieves: deterred }         # buzzer: short gentle beep
+  night_light: { cost: 2, needs: restless_night, achieves: comforted }   # LED: soft light at night
+  dispense:    { cost: 3, needs: can_feed, achieves: fed }               # servo: one portion of food
+
+budget: 30
+
+model:
+  dim: 48
+  layers: 2
+  heads: 4
+  hidden: 128
+  steps: 3000

@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tiny-langgraph trace viewer</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --line: #e3e2dd; --text: #1d1d1b; --muted: #6b6a65; --faint: #9c9a92;
+  --node: #ffffff; --node-line: #c9c7bf; --edge: #b4b2a9;
+  --hot: #0f8a6a; --hot-bg: #e1f5ee; --hot-text: #085041;
+  --wait: #b26a00; --wait-bg: #fdf0da; --bad: #b42323; --bad-bg: #fcebeb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161615; --panel: #1f1f1d; --line: #33322f; --text: #ecebe6; --muted: #a3a199; --faint: #75736c;
+    --node: #262624; --node-line: #4a4945; --edge: #5f5e5a;
+    --hot: #3cc59d; --hot-bg: #10352b; --hot-text: #9fe1cb;
+    --wait: #f0a83a; --wait-bg: #3a2a10; --bad: #f07a7a; --bad-bg: #3d1717;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button, select { font: inherit; color: inherit; }
+header { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+header h1 { font-size: 15px; font-weight: 600; margin: 0 8px 0 0; white-space: nowrap; }
+header h1 span { color: var(--muted); font-weight: 400; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 7px; padding: 5px 11px; cursor: pointer; }
+.btn:hover { border-color: var(--node-line); }
+.btn.primary { background: var(--hot); border-color: var(--hot); color: #fff; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.spacer { flex: 1; }
+.status { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); margin-right: 6px; vertical-align: 1px; }
+.status.live .dot { background: var(--hot); }
+main { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(320px, 1fr); height: calc(100% - 53px); }
+#graph-panel { position: relative; overflow: auto; border-right: 1px solid var(--line); }
+#graph-panel svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+#side { display: flex; flex-direction: column; min-height: 0; background: var(--panel); }
+#runs { border-bottom: 1px solid var(--line); max-height: 34%; overflow: auto; flex-shrink: 0; }
+#approval { margin: 12px 14px 4px; padding: 12px 14px; border-radius: 10px; background: var(--wait-bg); border: 1px solid var(--wait); flex-shrink: 0; }
+#approval .ap-title { font-weight: 600; color: var(--wait); }
+#approval .ap-q { margin: 2px 0 10px; font-family: var(--mono); font-size: 13px; }
+#approval .ap-row { display: flex; gap: 8px; flex-wrap: wrap; }
+#approval input { width: 110px; padding: 5px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); color: var(--text); font: inherit; }
+#approval .ap-msg { margin-top: 8px; font-size: 13px; min-height: 1em; }
+#approval .ap-msg.bad { color: var(--bad); }
+.run { display: grid; grid-template-columns: 34px 1fr auto; gap: 8px; align-items: center; padding: 7px 14px; cursor: pointer; border-left: 3px solid transparent; }
+.run:hover { background: var(--bg); }
+.run.sel { background: var(--bg); border-left-color: var(--hot); }
+.run .id { color: var(--faint); font-family: var(--mono); font-size: 12px; }
+.run .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 99px; white-space: nowrap; font-weight: 500; }
+.b-done { background: var(--hot-bg); color: var(--hot-text); }
+.b-running { background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+.b-waiting { background: var(--wait-bg); color: var(--wait); }
+.b-error { background: var(--bad-bg); color: var(--bad); }
+#controls { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+#controls input[type=range] { flex: 1; min-width: 100px; accent-color: var(--hot); }
+#controls .pos { font-family: var(--mono); font-size: 12px; color: var(--muted); min-width: 52px; text-align: right; }
+#timeline { overflow: auto; flex: 1; padding: 6px 0 20px; }
+.step { padding: 7px 14px 7px 16px; border-left: 3px solid transparent; cursor: pointer; }
+.step:hover { background: var(--bg); }
+.step.cur { border-left-color: var(--hot); background: var(--bg); }
+.step.future { opacity: .38; }
+.step .head { display: flex; gap: 8px; align-items: baseline; }
+.step .n { font-family: var(--mono); font-size: 11px; color: var(--faint); min-width: 22px; }
+.step .node { font-weight: 600; }
+.step .arrow { color: var(--faint); }
+.step .to { color: var(--muted); }
+.step .t { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+.notes { margin: 3px 0 0 30px; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.notes div { white-space: pre-wrap; word-break: break-word; padding: 1px 0; }
+.step.pause .node, .pause-line { color: var(--wait); }
+.end-line { margin: 10px 14px; padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.end-line.ok { background: var(--hot-bg); color: var(--hot-text); }
+.end-line.err { background: var(--bad-bg); color: var(--bad); }
+.end-line.wait { background: var(--wait-bg); color: var(--wait); }
+details#console { border-top: 1px solid var(--line); flex-shrink: 0; }
+details#console summary { padding: 7px 14px; cursor: pointer; color: var(--muted); font-size: 13px; }
+#console-lines { max-height: 160px; overflow: auto; padding: 0 14px 10px; font-family: var(--mono); font-size: 12px; color: var(--muted); white-space: pre-wrap; }
+.empty { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--muted); text-align: center; padding: 24px; }
+.empty p { margin: 0; max-width: 360px; }
+.empty .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.drop { outline: 2px dashed var(--hot); outline-offset: -8px; }
+/* graph */
+.g-node rect { fill: var(--node); stroke: var(--node-line); stroke-width: 1; transition: fill .2s, stroke .2s; }
+.g-node text { fill: var(--text); font-size: 13px; font-weight: 500; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
+.g-node.visited rect { stroke: var(--hot); }
+.g-node.current rect { fill: var(--hot); stroke: var(--hot); }
+.g-node.current text { fill: #fff; }
+.g-node.paused rect { fill: var(--wait-bg); stroke: var(--wait); stroke-width: 2; }
+.g-node.paused text { fill: var(--wait); }
+.g-node.failed rect { fill: var(--bad-bg); stroke: var(--bad); stroke-width: 2; }
+.g-term rect { fill: var(--bg); stroke: var(--node-line); }
+.g-term text { fill: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .04em; }
+.g-term.visited rect { stroke: var(--hot); }
+.g-edge { fill: none; stroke: var(--edge); stroke-width: 1.4; transition: stroke .2s; }
+.g-edge.cond { stroke-dasharray: 5 4; }
+.g-edge.taken { stroke: var(--hot); stroke-width: 2.2; }
+.g-edge.just { stroke: var(--hot); stroke-width: 3; }
+.m-norm { fill: var(--edge); } .m-hot { fill: var(--hot); }
+.legend { position: absolute; left: 14px; bottom: 12px; display: flex; gap: 14px; font-size: 12px; color: var(--muted); background: color-mix(in srgb, var(--bg) 85%, transparent); padding: 4px 8px; border-radius: 6px; }
+.legend svg { vertical-align: middle; margin-right: 4px; }
+@media (max-width: 820px) {
+  main { grid-template-columns: 1fr; height: auto; }
+  #graph-panel { border-right: 0; border-bottom: 1px solid var(--line); min-height: 380px; }
+  #side { min-height: 70vh; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .g-node.current rect { animation: pulse 1.2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .78; } }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>tiny-langgraph <span>trace viewer</span></h1>
+  <button class="btn primary" id="connect" title="Read a device over USB (Chrome or Edge)">Connect device</button>
+  <select id="baud" class="btn" aria-label="Baud rate">
+    <option>115200</option><option>230400</option><option>460800</option><option>921600</option><option>9600</option>
+  </select>
+  <button class="btn" id="open">Open log</button>
+  <input type="file" id="file" accept=".log,.txt,text/plain" hidden>
+  <button class="btn" id="demo">Load demo</button>
+  <button class="btn" id="clear">Clear</button>
+  <a class="btn" id="datalog" href="tlg/log.csv" hidden title="Every run's values, a file per day on the board">Download data log</a>
+  <button class="btn" id="datalog-clear" hidden>Clear data log</button>
+  <span class="spacer"></span>
+  <label class="status"><input type="checkbox" id="follow" checked> follow new runs</label>
+  <span class="status" id="status"><span class="dot"></span>no source</span>
+</header>
+<main>
+  <section id="graph-panel" aria-label="Agent graph">
+    <svg id="svg" role="img" aria-label="Agent graph"></svg>
+    <div class="empty" id="empty">
+      <p><strong>Watch an agent think.</strong><br>Open a trace log (from <code>--trace</code>), connect a device over USB, or load the demo.</p>
+      <div class="row">
+        <button class="btn primary" id="demo2">Load demo</button>
+        <button class="btn" id="open2">Open log</button>
+      </div>
+      <p style="font-size:12px">Or drop a .log file anywhere on this page.</p>
+    </div>
+    <div class="legend" id="legend" hidden>
+      <span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--edge)" stroke-width="1.5"/></svg>fixed edge</span>
+      <span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--edge)" stroke-width="1.5" stroke-dasharray="5 4"/></svg>chosen by a route</span>
+      <span><svg width="26" height="8"><line x1="0" y1="4" x2="26" y2="4" stroke="var(--hot)" stroke-width="2.5"/></svg>taken in this run</span>
+    </div>
+  </section>
+  <aside id="side">
+    <div id="approval" role="alertdialog" aria-labelledby="ap-title" hidden>
+      <div class="ap-title" id="ap-title">The agent is waiting for you</div>
+      <div class="ap-q" id="ap-q"></div>
+      <form class="ap-row" id="ap-form" autocomplete="off">
+        <input id="ap-pin" type="password" inputmode="numeric" placeholder="PIN" aria-label="Approval PIN">
+        <button class="btn primary" type="submit" id="ap-yes">Approve</button>
+        <button class="btn" type="button" id="ap-no">Deny</button>
+      </form>
+      <div class="ap-msg" id="ap-msg" aria-live="polite"></div>
+    </div>
+    <div id="runs" aria-label="Runs"></div>
+    <div id="controls">
+      <button class="btn" id="play" disabled>Replay</button>
+      <select id="speed" class="btn" aria-label="Replay speed">
+        <option value="1400">0.5x</option><option value="700" selected>1x</option><option value="350">2x</option><option value="150">4x</option>
+      </select>
+      <input type="range" id="scrub" min="0" max="0" value="0" disabled aria-label="Step">
+      <span class="pos" id="pos">-</span>
+    </div>
+    <div id="timeline" aria-live="polite"></div>
+    <details id="console">
+      <summary>Other output (<span id="console-count">0</span> lines)</summary>
+      <div id="console-lines"></div>
+    </details>
+  </aside>
+</main>
+
+<script type="text/plain" id="demo-trace">
+@tlg {"k":"graph","name":"door_guard","start":0,"n":8}
+@tlg {"k":"node","id":0,"name":"sense","cond":false,"to":[1]}
+@tlg {"k":"node","id":1,"name":"assess","cond":false,"to":[2]}
+@tlg {"k":"node","id":2,"name":"reason","cond":false,"to":[3]}
+@tlg {"k":"node","id":3,"name":"verify","cond":true,"to":[7,5,4,6]}
+@tlg {"k":"node","id":4,"name":"plan","cond":false,"to":[3]}
+@tlg {"k":"node","id":5,"name":"ask","cond":true,"to":[3,4]}
+@tlg {"k":"node","id":6,"name":"fallback","cond":false,"to":[7]}
+@tlg {"k":"node","id":7,"name":"act","cond":false,"to":[-1]}
+@tlg {"k":"run","run":1,"t":1,"label":"quiet night, nobody there"}
+@tlg {"k":"note","run":1,"t":1,"text":"inputs: cam_none audio_none heat_none tod_night owner_away wifi_up expect_none recent_none last_none"}
+@tlg {"k":"step","run":1,"t":1,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":1,"t":1,"text":"assess: visitor=lo threat=lo"}
+@tlg {"k":"note","run":1,"t":1,"text":"want: logged"}
+@tlg {"k":"step","run":1,"t":1,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":1,"t":1,"text":"model: visitor_lo threat_lo <plan> log <eos>"}
+@tlg {"k":"note","run":1,"t":1,"text":"confidence 1.00, 0 ms"}
+@tlg {"k":"step","run":1,"t":1,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":1,"t":1,"text":"check lm plan [log]: ok"}
+@tlg {"k":"step","run":1,"t":1,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":1,"t":1,"text":"act: log ok"}
+@tlg {"k":"step","run":1,"t":1,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":1,"t":1,"status":"done","steps":5,"reason":""}
+@tlg {"k":"run","run":2,"t":1,"label":"milkman knocks at his usual time"}
+@tlg {"k":"note","run":2,"t":1,"text":"inputs: cam_person_hi audio_knock heat_present tod_morning owner_home wifi_up expect_milkman recent_none last_none"}
+@tlg {"k":"step","run":2,"t":1,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":2,"t":1,"text":"assess: visitor=hi threat=lo"}
+@tlg {"k":"note","run":2,"t":1,"text":"want: logged,evidence"}
+@tlg {"k":"step","run":2,"t":1,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":2,"t":2,"text":"model: visitor_hi threat_lo <plan> log capture <eos>"}
+@tlg {"k":"note","run":2,"t":2,"text":"confidence 1.00, 1 ms"}
+@tlg {"k":"step","run":2,"t":2,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":2,"t":2,"text":"check lm plan [log -> capture]: ok"}
+@tlg {"k":"step","run":2,"t":2,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":2,"t":2,"text":"act: log ok"}
+@tlg {"k":"note","run":2,"t":2,"text":"act: capture ok"}
+@tlg {"k":"step","run":2,"t":2,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":2,"t":2,"status":"done","steps":5,"reason":""}
+@tlg {"k":"run","run":3,"t":2,"label":"unexpected visitor, afternoon"}
+@tlg {"k":"note","run":3,"t":2,"text":"inputs: cam_person_mid audio_voice heat_present tod_afternoon owner_home wifi_up expect_none recent_none last_none"}
+@tlg {"k":"step","run":3,"t":2,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":3,"t":2,"text":"assess: visitor=hi threat=lo"}
+@tlg {"k":"note","run":3,"t":2,"text":"want: logged,evidence,informed_low"}
+@tlg {"k":"step","run":3,"t":2,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":3,"t":2,"text":"model: visitor_hi threat_lo <plan> log capture notify_low <eos>"}
+@tlg {"k":"note","run":3,"t":2,"text":"confidence 1.00, 0 ms"}
+@tlg {"k":"step","run":3,"t":2,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":3,"t":2,"text":"check lm plan [log -> capture -> notify_low]: ok"}
+@tlg {"k":"step","run":3,"t":2,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":3,"t":2,"text":"act: log ok"}
+@tlg {"k":"note","run":3,"t":2,"text":"act: capture ok"}
+@tlg {"k":"note","run":3,"t":2,"text":"act: notify_low ok"}
+@tlg {"k":"step","run":3,"t":2,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":3,"t":2,"status":"done","steps":5,"reason":""}
+@tlg {"k":"run","run":4,"t":2,"label":"stranger at night, owner away"}
+@tlg {"k":"note","run":4,"t":2,"text":"inputs: cam_person_hi audio_none heat_present tod_night owner_away wifi_up expect_none recent_none last_none"}
+@tlg {"k":"step","run":4,"t":2,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":4,"t":2,"text":"assess: visitor=hi threat=hi"}
+@tlg {"k":"note","run":4,"t":2,"text":"want: logged,evidence,informed_high,deterred,secured"}
+@tlg {"k":"step","run":4,"t":2,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":4,"t":3,"text":"model: visitor_hi threat_hi <plan> log capture notify_high led_flash lock_down <eos>"}
+@tlg {"k":"note","run":4,"t":3,"text":"confidence 1.00, 1 ms"}
+@tlg {"k":"step","run":4,"t":3,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":4,"t":3,"text":"check lm plan [log -> capture -> notify_high -> led_flash -> lock_down]: ok"}
+@tlg {"k":"step","run":4,"t":3,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":4,"t":3,"text":"act: log ok"}
+@tlg {"k":"note","run":4,"t":3,"text":"act: capture ok"}
+@tlg {"k":"note","run":4,"t":3,"text":"act: notify_high ok"}
+@tlg {"k":"note","run":4,"t":3,"text":"act: led_flash ok"}
+@tlg {"k":"note","run":4,"t":3,"text":"act: lock_down ok"}
+@tlg {"k":"step","run":4,"t":3,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":4,"t":3,"status":"done","steps":5,"reason":""}
+@tlg {"k":"run","run":5,"t":3,"label":"same, but wifi is down"}
+@tlg {"k":"note","run":5,"t":3,"text":"inputs: cam_person_hi audio_none heat_present tod_night owner_away wifi_down expect_none recent_none last_none"}
+@tlg {"k":"step","run":5,"t":3,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":5,"t":3,"text":"assess: visitor=hi threat=hi"}
+@tlg {"k":"note","run":5,"t":3,"text":"want: logged,evidence,informed_high,deterred,secured"}
+@tlg {"k":"step","run":5,"t":3,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":5,"t":3,"text":"model: visitor_hi threat_hi <plan> log capture led_flash lock_down <eos>"}
+@tlg {"k":"note","run":5,"t":3,"text":"confidence 1.00, 0 ms"}
+@tlg {"k":"step","run":5,"t":3,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":5,"t":3,"text":"check lm plan [log -> capture -> led_flash -> lock_down]: ok"}
+@tlg {"k":"step","run":5,"t":3,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":5,"t":3,"text":"act: log ok"}
+@tlg {"k":"note","run":5,"t":3,"text":"act: capture ok"}
+@tlg {"k":"note","run":5,"t":3,"text":"act: led_flash ok"}
+@tlg {"k":"note","run":5,"t":3,"text":"act: lock_down ok"}
+@tlg {"k":"step","run":5,"t":3,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":5,"t":3,"status":"done","steps":5,"reason":""}
+@tlg {"k":"run","run":6,"t":3,"label":"intruder comes back (human approves calling help)"}
+@tlg {"k":"note","run":6,"t":3,"text":"inputs: cam_person_hi audio_none heat_present tod_night owner_away wifi_up expect_none recent_few last_alert"}
+@tlg {"k":"step","run":6,"t":3,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":6,"t":3,"text":"assess: visitor=hi threat=hi"}
+@tlg {"k":"note","run":6,"t":3,"text":"want: logged,evidence,informed_high,deterred,secured,help"}
+@tlg {"k":"step","run":6,"t":3,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":6,"t":4,"text":"model: visitor_hi threat_hi <plan> log capture notify_high led_flash lock_down call_help <eos>"}
+@tlg {"k":"note","run":6,"t":4,"text":"confidence 1.00, 1 ms"}
+@tlg {"k":"step","run":6,"t":4,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":6,"t":4,"text":"check lm plan [log -> capture -> notify_high -> led_flash -> lock_down -> call_help]: needs human approval"}
+@tlg {"k":"step","run":6,"t":4,"step":4,"node":3,"next":5}
+@tlg {"k":"note","run":6,"t":4,"text":"waiting for a human: approve call_help?"}
+@tlg {"k":"step","run":6,"t":4,"step":5,"node":5,"next":5}
+@tlg {"k":"end","run":6,"t":4,"status":"interrupted","steps":5,"reason":"approve call_help?"}
+@tlg {"k":"note","run":6,"t":4,"text":"human approved call_help"}
+@tlg {"k":"step","run":6,"t":4,"step":6,"node":5,"next":3}
+@tlg {"k":"note","run":6,"t":4,"text":"check lm plan [log -> capture -> notify_high -> led_flash -> lock_down -> call_help]: ok"}
+@tlg {"k":"step","run":6,"t":4,"step":7,"node":3,"next":7}
+@tlg {"k":"note","run":6,"t":4,"text":"act: log ok"}
+@tlg {"k":"note","run":6,"t":4,"text":"act: capture ok"}
+@tlg {"k":"note","run":6,"t":4,"text":"act: notify_high ok"}
+@tlg {"k":"note","run":6,"t":4,"text":"act: led_flash ok"}
+@tlg {"k":"note","run":6,"t":4,"text":"act: lock_down ok"}
+@tlg {"k":"note","run":6,"t":4,"text":"act: call_help ok"}
+@tlg {"k":"step","run":6,"t":4,"step":8,"node":7,"next":-1}
+@tlg {"k":"end","run":6,"t":4,"status":"done","steps":8,"reason":""}
+@tlg {"k":"run","run":7,"t":4,"label":"loud stranger returns in daytime (human refuses alarm + help)"}
+@tlg {"k":"note","run":7,"t":4,"text":"inputs: cam_person_hi audio_loud heat_present tod_afternoon owner_away wifi_up expect_none recent_few last_alert"}
+@tlg {"k":"step","run":7,"t":4,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":7,"t":4,"text":"assess: visitor=hi threat=hi"}
+@tlg {"k":"note","run":7,"t":4,"text":"want: logged,evidence,informed_high,deterred,secured,help"}
+@tlg {"k":"step","run":7,"t":4,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":7,"t":4,"text":"model: visitor_hi threat_hi <plan> log capture notify_high alarm lock_down call_help <eos>"}
+@tlg {"k":"note","run":7,"t":4,"text":"confidence 1.00, 0 ms"}
+@tlg {"k":"step","run":7,"t":4,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":7,"t":4,"text":"check lm plan [log -> capture -> notify_high -> alarm -> lock_down -> call_help]: needs human approval"}
+@tlg {"k":"step","run":7,"t":4,"step":4,"node":3,"next":5}
+@tlg {"k":"note","run":7,"t":4,"text":"waiting for a human: approve alarm+call_help?"}
+@tlg {"k":"step","run":7,"t":4,"step":5,"node":5,"next":5}
+@tlg {"k":"end","run":7,"t":4,"status":"interrupted","steps":5,"reason":"approve alarm+call_help?"}
+@tlg {"k":"note","run":7,"t":4,"text":"human said no to alarm+call_help: replanning without it"}
+@tlg {"k":"step","run":7,"t":4,"step":6,"node":5,"next":4}
+@tlg {"k":"note","run":7,"t":4,"text":"planner: log -> capture -> notify_high -> lock_down (cost 12)"}
+@tlg {"k":"note","run":7,"t":4,"text":"cannot achieve deterred,help right now"}
+@tlg {"k":"step","run":7,"t":4,"step":7,"node":4,"next":3}
+@tlg {"k":"note","run":7,"t":4,"text":"check planner plan [log -> capture -> notify_high -> lock_down]: ok"}
+@tlg {"k":"step","run":7,"t":4,"step":8,"node":3,"next":7}
+@tlg {"k":"note","run":7,"t":4,"text":"act: log ok"}
+@tlg {"k":"note","run":7,"t":4,"text":"act: capture ok"}
+@tlg {"k":"note","run":7,"t":4,"text":"act: notify_high ok"}
+@tlg {"k":"note","run":7,"t":4,"text":"act: lock_down ok"}
+@tlg {"k":"step","run":7,"t":4,"step":9,"node":7,"next":-1}
+@tlg {"k":"end","run":7,"t":4,"status":"done","steps":9,"reason":""}
+@tlg {"k":"run","run":8,"t":4,"label":"night visitor while a courier is expected (spoofing risk)"}
+@tlg {"k":"note","run":8,"t":4,"text":"inputs: cam_person_hi audio_none heat_present tod_night owner_away wifi_up expect_courier recent_none last_none"}
+@tlg {"k":"step","run":8,"t":4,"step":1,"node":0,"next":1}
+@tlg {"k":"note","run":8,"t":4,"text":"assess: visitor=hi threat=mid"}
+@tlg {"k":"note","run":8,"t":4,"text":"want: logged,evidence,informed_low,deterred"}
+@tlg {"k":"step","run":8,"t":4,"step":2,"node":1,"next":2}
+@tlg {"k":"note","run":8,"t":5,"text":"model: visitor_hi threat_mid <plan> log capture notify_low led_flash <eos>"}
+@tlg {"k":"note","run":8,"t":5,"text":"confidence 1.00, 1 ms"}
+@tlg {"k":"step","run":8,"t":5,"step":3,"node":2,"next":3}
+@tlg {"k":"note","run":8,"t":5,"text":"check lm plan [log -> capture -> notify_low -> led_flash]: ok"}
+@tlg {"k":"step","run":8,"t":5,"step":4,"node":3,"next":7}
+@tlg {"k":"note","run":8,"t":5,"text":"act: log ok"}
+@tlg {"k":"note","run":8,"t":5,"text":"act: capture ok"}
+@tlg {"k":"note","run":8,"t":5,"text":"act: notify_low ok"}
+@tlg {"k":"note","run":8,"t":5,"text":"act: led_flash ok"}
+@tlg {"k":"step","run":8,"t":5,"step":5,"node":7,"next":-1}
+@tlg {"k":"end","run":8,"t":5,"status":"done","steps":5,"reason":""}
+</script>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const NS = "http://www.w3.org/2000/svg";
+const S = { graph: null, runs: [], byId: new Map(), sel: null, pos: null, timer: null, console: [], dirty: false, layoutDirty: false, L: null };
+
+/* ---------------- ingest ---------------- */
+function ingest(line) {
+  line = line.replace(/\r$/, "");
+  if (!line.startsWith("@tlg ")) { if (line.trim()) addConsole(line); return; }
+  let ev;
+  try { ev = JSON.parse(line.slice(5)); } catch (e) { addConsole(line); return; }
+  switch (ev.k) {
+    case "graph":
+      S.graph = { name: ev.name, start: ev.start, n: ev.n, nodes: new Array(ev.n) };
+      S.byId = new Map();
+      S.layoutDirty = true;
+      break;
+    case "node":
+      if (S.graph && ev.id >= 0 && ev.id < S.graph.n) {
+        S.graph.nodes[ev.id] = { id: ev.id, name: ev.name, cond: !!ev.cond, to: ev.to || [] };
+        S.layoutDirty = true;
+      }
+      break;
+    case "run": {
+      const r = newRun(ev.run, ev.label);
+      if ($("#follow").checked) { S.sel = r; S.pos = null; }
+      break;
+    }
+    case "note": runFor(ev).pending.push({ t: ev.t, text: ev.text }); break;
+    case "step": {
+      const r = runFor(ev);
+      r.steps.push({ node: ev.node, next: ev.next, step: ev.step, t: ev.t, notes: r.pending });
+      r.pending = [];
+      if (r.status === "waiting") r.status = "running";
+      break;
+    }
+    case "end": {
+      const r = runFor(ev);
+      if (ev.status === "interrupted") {
+        r.status = "waiting";
+        const last = r.steps[r.steps.length - 1];
+        if (last) last.pause = ev.reason || "paused";
+      } else {
+        r.status = ev.status === "done" ? "done" : "error";
+        r.end = { status: ev.status, steps: ev.steps, t: ev.t };
+      }
+      break;
+    }
+  }
+  S.dirty = true;
+}
+function newRun(id, label) {
+  const r = { id, label: label || `run ${id}`, steps: [], pending: [], status: "running", end: null };
+  S.runs.push(r);
+  S.byId.set(id, r);
+  return r;
+}
+function runFor(ev) { return S.byId.get(ev.run) || newRun(ev.run, null); }
+function addConsole(line) {
+  S.console.push(line);
+  if (S.console.length > 1000) S.console.splice(0, S.console.length - 1000);
+  S.dirty = true;
+}
+function ingestText(text) { for (const line of text.split("\n")) ingest(line); }
+
+/* ---------------- layout ---------------- */
+const NW = 118, NH = 36, ROW = 74, COL = 150, PAD = 40;
+
+function layout(g) {
+  const N = g.n, END = N;
+  const out = (u) => (u < N && g.nodes[u] ? g.nodes[u].to.map((t) => (t < 0 ? END : t)) : []);
+  const color = new Array(N + 1).fill(0), back = new Set(), order = [];
+  const dfs = (u) => {
+    color[u] = 1;
+    for (const v of out(u)) {
+      if (color[v] === 1) back.add(u + ">" + v);
+      else if (color[v] === 0) dfs(v);
+    }
+    color[u] = 2;
+    order.push(u);
+  };
+  if (g.start >= 0 && g.start < N) dfs(g.start);
+  for (let i = 0; i <= N; i++) if (color[i] === 0) dfs(i);
+  const topo = order.slice().reverse();
+
+  const layer = new Array(N + 1).fill(0);
+  for (const u of topo) for (const v of out(u)) if (!back.has(u + ">" + v)) layer[v] = Math.max(layer[v], layer[u] + 1);
+  let maxL = 0;
+  for (let i = 0; i < N; i++) maxL = Math.max(maxL, layer[i]);
+  layer[END] = Math.max(layer[END], maxL + 1);
+
+  const rows = [];
+  for (const u of topo) (rows[layer[u]] = rows[layer[u]] || []).push(u);
+  for (let i = 0; i < rows.length; i++) rows[i] = rows[i] || [];
+
+  /* edges that skip rows get invisible waypoints, so they route around boxes */
+  let nextId = N + 1;
+  const chains = new Map(), preds = Array.from({ length: N + 1 }, () => []);
+  for (let u = 0; u < N; u++) {
+    for (const v of out(u)) {
+      if (back.has(u + ">" + v)) continue;
+      const chain = [u];
+      for (let l = layer[u] + 1; l < layer[v]; l++) {
+        const w = nextId++;
+        layer[w] = l;
+        rows[l].push(w);
+        preds[w] = [chain[chain.length - 1]];
+        chain.push(w);
+      }
+      preds[v].push(chain[chain.length - 1]);
+      chain.push(v);
+      chains.set(u + ">" + v, chain);
+    }
+  }
+  const xi = new Array(nextId).fill(0);
+  rows.forEach((r) => r.forEach((u, i) => (xi[u] = i - (r.length - 1) / 2)));
+  for (let it = 0; it < 4; it++) {
+    for (let l = 1; l < rows.length; l++) {
+      const bc = (u) => (preds[u].length ? preds[u].reduce((s, p) => s + xi[p], 0) / preds[u].length : xi[u]);
+      rows[l].sort((a, b) => bc(a) - bc(b));
+      rows[l].forEach((u, i) => (xi[u] = i - (rows[l].length - 1) / 2));
+    }
+  }
+
+  /* nodes with edges looping back go to the right end of their row, so the
+     loop's path to the right-hand lane doesn't cross anything */
+  const loops = new Set([...back].map((k) => +k.split(">")[0]));
+  for (const r of rows) {
+    r.sort((a, b) => (loops.has(a) ? 1 : 0) - (loops.has(b) ? 1 : 0) || xi[a] - xi[b]);
+    r.forEach((u, i) => (xi[u] = i - (r.length - 1) / 2));
+  }
+
+  const widest = Math.max(...rows.map((r) => r.length));
+  const backEdges = [...back].map((k) => k.split(">").map(Number));
+  const laneSpace = backEdges.length ? 34 + backEdges.length * 14 : 0;
+  const W = Math.max(widest * COL, 300) + PAD * 2 + laneSpace;
+  const cx = PAD + (widest * COL) / 2 + 10;
+  const pos = new Array(nextId);
+  rows.forEach((r, l) => r.forEach((u) => (pos[u] = { x: cx + xi[u] * COL, y: PAD + 26 + l * ROW })));
+  const H = PAD + 26 + (rows.length - 1) * ROW + NH / 2 + PAD;
+  return { N, END, pos, rows, back, out, chains, W, H, backEdges, rightmost: cx + ((widest - 1) / 2) * COL + NW / 2 };
+}
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function drawGraph() {
+  const g = S.graph, svg = $("#svg");
+  svg.innerHTML = "";
+  if (!g || g.nodes.filter(Boolean).length < g.n) { S.L = null; return; }
+  const L = (S.L = layout(g));
+  svg.setAttribute("width", L.W);
+  svg.setAttribute("height", L.H);
+  svg.setAttribute("viewBox", `0 0 ${L.W} ${L.H}`);
+  const defs = el("defs", {}, svg);
+  for (const [id, cls] of [["ah", "m-norm"], ["ah-hot", "m-hot"]]) {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5, markerWidth: 9, markerHeight: 9, markerUnits: "userSpaceOnUse", orient: "auto-start-reverse" }, defs);
+    el("path", { d: "M1 1 L9 5 L1 9 z", class: cls }, m);
+  }
+  const edges = el("g", {}, svg), nodes = el("g", {}, svg);
+  S.edgeEls = new Map();
+  S.nodeEls = new Map();
+
+  /* start marker */
+  const sp = L.pos[g.start];
+  if (sp) {
+    el("circle", { cx: sp.x, cy: sp.y - NH / 2 - 22, r: 4, fill: "var(--faint)" }, edges);
+    el("line", { x1: sp.x, y1: sp.y - NH / 2 - 18, x2: sp.x, y2: sp.y - NH / 2 - 2, class: "g-edge", "marker-end": "url(#ah)" }, edges);
+  }
+
+  let lane = 0;
+  for (let u = 0; u < L.N; u++) {
+    const node = g.nodes[u];
+    for (const v of L.out(u)) {
+      const a = L.pos[u], b = L.pos[v];
+      if (!a || !b) continue;
+      let d;
+      if (L.back.has(u + ">" + v)) {
+        const x = L.rightmost + 26 + lane++ * 14;
+        const x1 = a.x + NW / 2, x2 = b.x + NW / 2, r = 8;
+        d = `M${x1} ${a.y} H${x - r} Q${x} ${a.y} ${x} ${a.y - r} V${b.y + r} Q${x} ${b.y} ${x - r} ${b.y} H${x2 + 2}`;
+      } else if (Math.abs(a.y - b.y) < 1) {
+        const dir = b.x > a.x ? 1 : -1;
+        d = `M${a.x + (dir * NW) / 2} ${a.y} H${b.x - (dir * NW) / 2 - dir * 2}`;
+      } else {
+        const chain = L.chains.get(u + ">" + v) || [u, v];
+        const pts = chain.map((id) => ({ x: L.pos[id].x, y: L.pos[id].y }));
+        pts[0].y += NH / 2;
+        pts[pts.length - 1].y -= NH / 2 + 2;
+        d = `M${pts[0].x} ${pts[0].y}`;
+        for (let i = 1; i < pts.length; i++) {
+          const p0 = pts[i - 1], p1 = pts[i], k = (p1.y - p0.y) * 0.5;
+          d += ` C${p0.x} ${p0.y + k} ${p1.x} ${p1.y - k} ${p1.x} ${p1.y}`;
+        }
+      }
+      const p = el("path", { d, class: "g-edge" + (node.cond ? " cond" : ""), "marker-end": "url(#ah)" }, edges);
+      S.edgeEls.set(u + ">" + (v === L.END ? -1 : v), p);
+    }
+  }
+
+  for (let u = 0; u <= L.N; u++) {
+    const p = L.pos[u];
+    if (!p) continue;
+    const isEnd = u === L.END;
+    const grp = el("g", { class: isEnd ? "g-node g-term" : "g-node", transform: `translate(${p.x - NW / 2},${p.y - NH / 2})` }, nodes);
+    const w = isEnd ? 70 : NW;
+    el("rect", { x: isEnd ? (NW - w) / 2 : 0, y: 0, width: w, height: NH, rx: isEnd ? NH / 2 : 8 }, grp);
+    const t = el("text", { x: NW / 2, y: NH / 2 }, grp);
+    t.textContent = isEnd ? "END" : g.nodes[u].name;
+    const title = el("title", {}, grp);
+    title.textContent = isEnd ? "end of the run" : `${g.nodes[u].name} (node ${u})`;
+    S.nodeEls.set(isEnd ? -1 : u, grp);
+  }
+  $("#legend").hidden = false;
+}
+
+/* ---------------- highlight + timeline ---------------- */
+function visibleSteps(r) { return S.pos === null ? r.steps.length : Math.min(S.pos, r.steps.length); }
+
+function paintGraph() {
+  if (!S.L) return;
+  S.nodeEls.forEach((e) => e.classList.remove("visited", "current", "paused", "failed"));
+  S.edgeEls.forEach((e) => { e.classList.remove("taken", "just"); e.setAttribute("marker-end", "url(#ah)"); });
+  const r = S.sel;
+  if (!r) return;
+  const n = visibleSteps(r);
+  for (let i = 0; i < n; i++) {
+    const s = r.steps[i];
+    S.nodeEls.get(s.node)?.classList.add("visited");
+    const e = S.edgeEls.get(s.node + ">" + s.next);
+    if (e && s.next !== s.node) { e.classList.add("taken"); e.setAttribute("marker-end", "url(#ah-hot)"); }
+    if (s.next === -1) S.nodeEls.get(-1)?.classList.add("visited");
+  }
+  if (n === 0) return;
+  const last = r.steps[n - 1];
+  const node = S.nodeEls.get(last.node);
+  if (last.pause && last.next === last.node) node?.classList.add("paused");
+  else node?.classList.add("current");
+  if (n === r.steps.length && r.status === "error") node?.classList.add("failed");
+  const e = S.edgeEls.get(last.node + ">" + last.next);
+  if (e && last.next !== last.node) e.classList.add("just");
+}
+
+function nodeName(id) {
+  if (id === -1) return "END";
+  return S.graph?.nodes[id]?.name ?? `node ${id}`;
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+const BADGE = { done: ["b-done", "done"], running: ["b-running", "running"], waiting: ["b-waiting", "waiting"], error: ["b-error", "error"] };
+
+function renderRuns() {
+  const box = $("#runs");
+  box.innerHTML = S.runs.map((r, i) => {
+    const [cls, txt] = BADGE[r.status];
+    return `<div class="run${r === S.sel ? " sel" : ""}" data-i="${i}"><span class="id">#${r.id}</span>` +
+      `<span class="label" title="${esc(r.label)}">${esc(r.label)}</span><span class="badge ${cls}">${txt}</span></div>`;
+  }).join("");
+  box.querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+}
+
+function renderTimeline() {
+  const tl = $("#timeline"), r = S.sel;
+  const scrub = $("#scrub"), play = $("#play");
+  if (!r) { tl.innerHTML = ""; scrub.disabled = play.disabled = true; $("#pos").textContent = "-"; return; }
+  const n = visibleSteps(r);
+  scrub.disabled = play.disabled = r.steps.length === 0;
+  scrub.max = r.steps.length;
+  scrub.value = n;
+  $("#pos").textContent = `${n} / ${r.steps.length}`;
+  const t0 = r.steps[0]?.t ?? 0;
+  let html = "";
+  r.steps.forEach((s, i) => {
+    const paused = s.pause && s.next === s.node;
+    const cls = ["step", paused ? "pause" : "", i === n - 1 ? "cur" : "", i >= n ? "future" : ""].join(" ");
+    const to = paused ? `<span class="pause-line">paused: ${esc(s.pause)}</span>` : `<span class="arrow">&rarr;</span> <span class="to">${esc(nodeName(s.next))}</span>`;
+    html += `<div class="${cls}" data-i="${i}"><div class="head"><span class="n">${s.step}</span><span class="node">${esc(nodeName(s.node))}</span>${to}` +
+      `<span class="t">+${s.t - t0} ms</span></div>`;
+    if (s.notes.length) html += `<div class="notes">${s.notes.map((x) => `<div>${esc(x.text)}</div>`).join("")}</div>`;
+    html += `</div>`;
+  });
+  if (r.pending.length) html += `<div class="step future"><div class="notes">${r.pending.map((x) => `<div>${esc(x.text)}</div>`).join("")}</div></div>`;
+  if (n === r.steps.length) {
+    if (r.end) {
+      const ok = r.end.status === "done";
+      html += `<div class="end-line ${ok ? "ok" : "err"}">${ok ? "Finished" : "Stopped: " + esc(r.end.status)} after ${r.end.steps} steps</div>`;
+    } else if (r.status === "waiting") {
+      html += `<div class="end-line wait">Waiting for a human. The run resumes when the answer arrives.</div>`;
+    }
+  }
+  const atBottom = tl.scrollTop + tl.clientHeight >= tl.scrollHeight - 30;
+  tl.innerHTML = html;
+  const cur = tl.querySelector(".step.cur");
+  if (S.pos !== null && cur) cur.scrollIntoView({ block: "nearest" });
+  else if (atBottom) tl.scrollTop = tl.scrollHeight;
+}
+
+function renderConsole() {
+  $("#console-count").textContent = S.console.length;
+  const box = $("#console-lines");
+  if ($("#console").open) { box.textContent = S.console.slice(-300).join("\n"); box.scrollTop = box.scrollHeight; }
+}
+
+function frame() {
+  if (S.layoutDirty) { S.layoutDirty = false; drawGraph(); S.dirty = true; }
+  if (S.dirty) {
+    S.dirty = false;
+    $("#empty").style.display = S.graph || S.runs.length ? "none" : "flex";
+    renderRuns(); renderTimeline(); paintGraph(); renderConsole();
+  }
+  requestAnimationFrame(frame);
+}
+
+/* ---------------- replay ---------------- */
+function stopReplay() { clearInterval(S.timer); S.timer = null; $("#play").textContent = "Replay"; }
+function startReplay() {
+  const r = S.sel;
+  if (!r || !r.steps.length) return;
+  stopReplay();
+  S.pos = 0;
+  $("#play").textContent = "Stop";
+  S.timer = setInterval(() => {
+    S.pos++;
+    if (S.pos >= r.steps.length) { S.pos = null; stopReplay(); }
+    S.dirty = true;
+  }, +$("#speed").value);
+  S.dirty = true;
+}
+
+/* ---------------- sources ---------------- */
+function setStatus(text, live) { const s = $("#status"); s.className = "status" + (live ? " live" : ""); s.innerHTML = `<span class="dot"></span>${esc(text)}`; }
+function clearAll() {
+  stopReplay();
+  Object.assign(S, { graph: null, runs: [], byId: new Map(), sel: null, pos: null, console: [], L: null });
+  $("#svg").innerHTML = ""; $("#legend").hidden = true;
+  S.layoutDirty = S.dirty = true;
+}
+function loadText(text, name) { stopBoard(); clearAll(); ingestText(text); if (!$("#follow").checked && S.runs.length) S.sel = S.runs[0]; setStatus(name, false); }
+
+/* ---------------- board mode: this page was served by the device ---------------- */
+async function detectBoard() {
+  if (!location.protocol.startsWith("http")) return;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 2500);
+    const r = await fetch("tlg/info", { cache: "no-store", signal: ctl.signal });
+    clearTimeout(t);
+    const info = await r.json();
+    if (!info.board) return;
+    S.board = { name: info.board, boot: info.boot, last: 0, first: true, approval: !!info.approval, timer: null };
+    clearAll();
+    setStatus(`live over Wi-Fi: ${info.board}`, true);
+    pollEvents();
+    if (S.board.approval) pollPending();
+    if (info.log) showDataLog();
+  } catch (e) { /* not served by a board: normal viewer */ }
+}
+
+/* The board's data log: download it to fit models on a PC; clearing it needs the PIN. */
+async function showDataLog() {
+  const a = $("#datalog"), c = $("#datalog-clear");
+  try {
+    const log = await (await fetch("tlg/log", { cache: "no-store" })).json();
+    const kb = Math.round(log.bytes / 1024);
+    a.textContent = `Download data log (${log.days.length} day${log.days.length === 1 ? "" : "s"}, ${kb} KB)`;
+    a.title = log.synced ? `keeps the last ${log.keep} days` : "waiting for the clock to sync: nothing is logged yet";
+  } catch (e) { return; }
+  a.hidden = c.hidden = false;
+  c.onclick = async () => {
+    const pin = prompt("PIN to delete the whole data log on the board:");
+    if (!pin) return;
+    const r = await fetch("tlg/log/clear", { method: "POST", body: new URLSearchParams({ pin }) });
+    alert(r.ok ? "Data log deleted." : r.status === 403 ? "Wrong PIN." : "Couldn't delete it (" + r.status + ").");
+    showDataLog();
+  };
+}
+
+function stopBoard() {
+  if (!S.board) return;
+  clearTimeout(S.board.timer);
+  clearTimeout(S.board.pendingTimer);
+  S.board = null;
+  showApproval(null);
+}
+
+async function pollEvents() {
+  const b = S.board;
+  if (!b) return;
+  let delay = 500;
+  try {
+    const r = await fetch(`tlg/events?since=${b.last}${b.first ? "&graph=1" : ""}`, { cache: "no-store" });
+    if (!r.ok) throw new Error(r.status);
+    const boot = r.headers.get("X-Boot");
+    if (b !== S.board) return;
+    if (boot && b.boot && boot !== b.boot) {
+      b.boot = boot; b.last = 0; b.first = true;
+      clearAll();
+      addConsole("the board restarted");
+      delay = 0;
+    } else {
+      const text = await r.text();
+      b.first = false;
+      const last = parseInt(r.headers.get("X-Last"), 10);
+      if (!isNaN(last)) b.last = last;
+      ingestText(text);
+      if (r.headers.get("X-More") === "1") delay = 20;
+      setStatus(`live over Wi-Fi: ${b.name}`, true);
+    }
+  } catch (e) {
+    setStatus("board not reachable, retrying...", false);
+    delay = 2000;
+  }
+  if (b === S.board) b.timer = setTimeout(pollEvents, delay);
+}
+
+async function pollPending() {
+  const b = S.board;
+  if (!b) return;
+  try {
+    const r = await fetch("tlg/pending", { cache: "no-store" });
+    const p = await r.json();
+    if (b === S.board) showApproval(p.pending ? p : null);
+  } catch (e) { /* events poll reports connection problems */ }
+  if (b === S.board) b.pendingTimer = setTimeout(pollPending, 1000);
+}
+
+/* Only rebuilt when the question changes, so typing the PIN isn't interrupted. */
+let shownApproval = "";
+function showApproval(p) {
+  const key = p ? `${p.run}|${p.question}` : "";
+  if (key === shownApproval) return;
+  shownApproval = key;
+  const box = $("#approval");
+  box.hidden = !p;
+  if (!p) return;
+  box.dataset.run = p.run;
+  $("#ap-q").textContent = `run #${p.run}: ${p.question}`;
+  $("#ap-msg").textContent = "";
+  $("#ap-msg").className = "ap-msg";
+  try { $("#ap-pin").value = sessionStorage.getItem("tlg-pin") || ""; } catch (e) {}
+  $("#ap-yes").disabled = $("#ap-no").disabled = false;
+}
+
+async function sendAnswer(answer) {
+  const pin = $("#ap-pin").value.trim();
+  const msg = $("#ap-msg");
+  msg.className = "ap-msg";
+  if (!pin) { msg.textContent = "Enter the PIN first"; msg.className = "ap-msg bad"; $("#ap-pin").focus(); return; }
+  $("#ap-yes").disabled = $("#ap-no").disabled = true;
+  msg.textContent = "Sending...";
+  try {
+    const body = new URLSearchParams({ pin, answer, run: $("#approval").dataset.run });
+    const r = await fetch("tlg/answer", { method: "POST", body });
+    const j = await r.json().catch(() => ({}));
+    if (r.ok) {
+      try { sessionStorage.setItem("tlg-pin", pin); } catch (e) {}
+      msg.textContent = answer === "yes" ? "Approved. The agent is continuing." : "Denied. The agent is replanning.";
+      return;
+    }
+    msg.className = "ap-msg bad";
+    msg.textContent = r.status === 403 ? "Wrong PIN"
+      : r.status === 429 ? `Too many wrong PINs. Try again in ${j.retry || 60} s`
+      : r.status === 409 ? "Already answered (or timed out)"
+      : `Failed (${r.status})`;
+    if (r.status === 403) { try { sessionStorage.removeItem("tlg-pin"); } catch (e) {} }
+  } catch (e) {
+    msg.className = "ap-msg bad";
+    msg.textContent = "Could not reach the board";
+  }
+  $("#ap-yes").disabled = $("#ap-no").disabled = false;
+}
+$("#ap-pin").addEventListener("input", () => { $("#ap-msg").textContent = ""; $("#ap-msg").className = "ap-msg"; });
+$("#ap-form").onsubmit = (e) => { e.preventDefault(); sendAnswer("yes"); };
+$("#ap-no").onclick = () => sendAnswer("no");
+function loadFile(f) { f.text().then((t) => loadText(t, f.name)); }
+
+let port = null, reader = null;
+async function connect() {
+  if (port) { try { await reader?.cancel(); } catch (e) {} try { await port.close(); } catch (e) {} port = null; $("#connect").textContent = "Connect device"; setStatus("disconnected", false); return; }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: +$("#baud").value });
+  } catch (e) { port = null; setStatus(e.name === "NotFoundError" ? "no device chosen" : "could not open: " + e.message, false); return; }
+  stopBoard();
+  clearAll();
+  $("#connect").textContent = "Disconnect";
+  setStatus(`live, ${$("#baud").value} baud`, true);
+  const decoder = new TextDecoderStream();
+  port.readable.pipeTo(decoder.writable).catch(() => {});
+  reader = decoder.readable.getReader();
+  let buf = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) { ingest(buf.slice(0, i)); buf = buf.slice(i + 1); }
+    }
+  } catch (e) { setStatus("connection lost", false); }
+}
+
+$("#connect").onclick = connect;
+if (!("serial" in navigator)) {
+  $("#connect").disabled = true;
+  $("#connect").title = "Live connection needs Chrome or Edge (Web Serial). Logs and the demo work everywhere.";
+}
+for (const id of ["#open", "#open2"]) $(id).onclick = () => $("#file").click();
+$("#file").onchange = (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ""; };
+for (const id of ["#demo", "#demo2"]) $(id).onclick = () => loadText($("#demo-trace").textContent, "demo: door_guard");
+$("#clear").onclick = () => {
+  clearAll();
+  if (S.board) { S.board.first = true; return; }     /* keep streaming; resend the graph */
+  setStatus(port ? "live" : "no source", !!port);
+};
+$("#runs").onclick = (e) => { const d = e.target.closest(".run"); if (!d) return; stopReplay(); S.sel = S.runs[+d.dataset.i]; S.pos = null; S.dirty = true; };
+$("#timeline").onclick = (e) => { const d = e.target.closest(".step[data-i]"); if (!d) return; stopReplay(); S.pos = +d.dataset.i + 1; if (S.pos >= S.sel.steps.length) S.pos = null; S.dirty = true; };
+$("#scrub").oninput = (e) => { stopReplay(); const v = +e.target.value; S.pos = v >= S.sel.steps.length ? null : v; S.dirty = true; };
+$("#play").onclick = () => (S.timer ? stopReplay() : startReplay());
+$("#console").ontoggle = () => (S.dirty = true);
+document.addEventListener("keydown", (e) => {
+  if (!S.sel || e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    stopReplay();
+    const len = S.sel.steps.length, cur = S.pos === null ? len : S.pos;
+    const next = Math.max(0, Math.min(len, cur + (e.key === "ArrowRight" ? 1 : -1)));
+    S.pos = next >= len ? null : next;
+    S.dirty = true;
+    e.preventDefault();
+  }
+});
+document.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("drop"); });
+document.addEventListener("dragleave", (e) => { if (!e.relatedTarget) document.body.classList.remove("drop"); });
+document.addEventListener("drop", (e) => { e.preventDefault(); document.body.classList.remove("drop"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+
+requestAnimationFrame(frame);
+detectBoard();
+</script>
+</body>
+</html>

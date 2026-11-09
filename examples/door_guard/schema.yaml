@@ -1,0 +1,103 @@
+# Door guard: watches a front door and decides how to respond.
+#
+#   python tools/tlg.py check examples/door_guard/schema.yaml
+#   python tools/tlg.py all   examples/door_guard/schema.yaml
+
+name: door_guard
+description: watches a front door and decides how to respond
+
+# What the agent observes. One token per slot, always in this order.
+inputs:
+  cam:
+    values: [none, person_lo, person_mid, person_hi]
+    bins: [0.10, 0.34, 0.67]          # door_guard_bin_cam(confidence) picks the value
+  audio:  [none, voice, knock, loud]
+  heat:   [none, present]
+  tod:    [morning, afternoon, evening, night]
+  owner:  [home, away]
+  wifi:   [up, down]
+  expect: [none, owner, milkman, courier]   # who usually comes at this hour (from memory)
+  recent: [none, few, many]                 # similar events lately (from memory)
+  last:   [none, ok, alert]                 # how the last event ended
+
+# What the model concludes before it plans.
+think:
+  visitor: [lo, mid, hi]
+  threat:  [lo, mid, hi]
+
+# Points per observation, added up. Values not listed count 0.
+# Whole numbers, so the device and the training data agree exactly.
+scores:
+  visitor_points:                 # how sure are we someone is there?
+    cam:   { person_lo: 1, person_mid: 2, person_hi: 4 }
+    audio: { voice: 1, knock: 2, loud: 1 }
+    heat:  { present: 1 }
+  suspicion:                      # how worrying is it that someone is there?
+    tod:    { night: 2 }
+    owner:  { away: 1 }
+    audio:  { loud: 1 }
+    last:   { alert: 2 }
+    expect: { owner: -2, milkman: -2, courier: -2 }   # someone usually comes now
+
+# Conditions used by action preconditions. The device checks them with its
+# own assessment, so a model can never unlock an action by over-reacting.
+facts:
+  wifi_up:     wifi == up
+  night:       tod == night
+  high_threat: threat == hi
+
+# The rules: what the model learns, and what the device checks it against.
+# think: first matching rule wins.  want: when each outcome is wanted.
+rules:
+  think:
+    visitor:
+      - hi: visitor_points >= 4
+      - mid: visitor_points >= 2
+      - lo: true
+    threat:
+      - lo: visitor == lo                 # nobody there: night alone is not a threat
+      - hi: visitor == hi and suspicion >= 3
+      - mid: visitor == hi and suspicion >= 1
+      - hi: visitor == mid and suspicion >= 4
+      - mid: visitor == mid and suspicion >= 2
+      - lo: true
+  want:
+    logged: true
+    evidence: visitor != lo
+    informed_high: threat == hi
+    secured: threat == hi
+    deterred: threat == hi or (threat == mid and night)
+    help: threat == hi and owner == away and last == alert      # it came back and nobody is home
+    # a mid threat, or an unexpected visitor (but not too often)
+    informed_low: threat == mid or (threat == lo and visitor != lo and expect == none and recent != many)
+
+# What a plan can achieve. A higher weight means it matters more when not
+# everything is possible. only_if_wanted: a plan doing this when it wasn't
+# asked for is rejected (no surprise notifications or alarms).
+outcomes:
+  logged:        1
+  evidence:      2
+  informed_low:  { weight: 3, only_if_wanted: true }
+  informed_high: { weight: 5, only_if_wanted: true }
+  deterred:      { weight: 4, only_if_wanted: true }
+  secured:       { weight: 4, only_if_wanted: true }
+  help:          { weight: 6, only_if_wanted: true }
+
+actions:
+  log:         { cost: 1, achieves: logged }
+  capture:     { cost: 2, achieves: evidence }
+  notify_low:  { cost: 3, needs: wifi_up, after: evidence, achieves: informed_low }
+  notify_high: { cost: 4, needs: wifi_up, after: evidence, achieves: informed_high }
+  led_flash:   { cost: 2, needs: night, achieves: deterred }
+  alarm:       { cost: 8, needs: high_threat, achieves: deterred, approval: true }
+  lock_down:   { cost: 5, needs: high_threat, achieves: secured }
+  call_help:   { cost: 10, needs: [wifi_up, high_threat], achieves: help, approval: true }
+
+budget: 40
+
+model:
+  dim: 48
+  layers: 2
+  heads: 4
+  hidden: 128
+  steps: 3000

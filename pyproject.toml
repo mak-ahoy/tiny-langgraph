@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiny-langgraph"
+version = "0.4.0"
+description = "LangGraph-style agents for microcontrollers, with a tiny language model that runs on the chip"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Ali Haris" }]
+dependencies = ["numpy", "pyyaml"]
+
+[project.optional-dependencies]
+train = ["torch"]
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[project.urls]
+Homepage = "https://github.com/mak-ahoy/tiny-langgraph"
+Issues = "https://github.com/mak-ahoy/tiny-langgraph/issues"
