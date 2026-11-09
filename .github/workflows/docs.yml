@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install "mkdocs-material>=9.5,<10"
-      - name: Build (strict: broken links fail) and publish to gh-pages
+      - name: "Build (strict: broken links fail) and publish to gh-pages"
         env:
           NO_MKDOCS_2_WARNING: "1"
         run: mkdocs gh-deploy --strict --force --no-history
